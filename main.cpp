@@ -9,11 +9,25 @@
 #include <iostream>
 #include <cstring>
 #include "Leap.h"
+#include "ref.cpp"
+#include <iostream>
+#include <pcl/common/common.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/io/ply_io.h>
+#include <pcl/search/kdtree.h>
+#include <pcl/features/normal_3d_omp.h>
+#include <pcl/point_types.h>
+#include <pcl/surface/mls.h>
+#include <pcl/surface/poisson.h>
+#include <pcl/filters/passthrough.h>
 
 using namespace Leap;
+using namespace pcl ;
+
+void reconstruct();
 
 class SampleListener : public Listener {
-  public:
+public:
     virtual void onInit(const Controller&);
     virtual void onConnect(const Controller&);
     virtual void onDisconnect(const Controller&);
@@ -25,213 +39,153 @@ class SampleListener : public Listener {
     virtual void onServiceConnect(const Controller&);
     virtual void onServiceDisconnect(const Controller&);
 
-  private:
+private:
 };
 
 const std::string fingerNames[] = {"Thumb", "Index", "Middle", "Ring", "Pinky"};
 const std::string boneNames[] = {"Metacarpal", "Proximal", "Middle", "Distal"};
 const std::string stateNames[] = {"STATE_INVALID", "STATE_START", "STATE_UPDATE", "STATE_END"};
 
+pcl::PointCloud<pcl::PointXYZ>::Ptr basic_cloud_ptr (new pcl::PointCloud<pcl::PointXYZ>);
+
 void SampleListener::onInit(const Controller& controller) {
-  std::cout << "Initialized" << std::endl;
+    std::cout << "Initialized" << std::endl;
 }
 
 void SampleListener::onConnect(const Controller& controller) {
-  std::cout << "Connected" << std::endl;
-  controller.enableGesture(Gesture::TYPE_CIRCLE);
-  controller.enableGesture(Gesture::TYPE_KEY_TAP);
-  controller.enableGesture(Gesture::TYPE_SCREEN_TAP);
-  controller.enableGesture(Gesture::TYPE_SWIPE);
+    std::cout << "Connected" << std::endl;
+    controller.enableGesture(Gesture::TYPE_CIRCLE);
+    controller.enableGesture(Gesture::TYPE_KEY_TAP);
+    controller.enableGesture(Gesture::TYPE_SCREEN_TAP);
+    controller.enableGesture(Gesture::TYPE_SWIPE);
 }
 
 void SampleListener::onDisconnect(const Controller& controller) {
-  // Note: not dispatched when running in a debugger.
-  std::cout << "Disconnected" << std::endl;
+    // Note: not dispatched when running in a debugger.
+    std::cout << "Disconnected" << std::endl;
 }
 
 void SampleListener::onExit(const Controller& controller) {
-  std::cout << "Exited" << std::endl;
+    std::cout << "Exited" << std::endl;
+    basic_cloud_ptr->width = (int) basic_cloud_ptr->points.size ();
+    basic_cloud_ptr->height = 1;
+    reconstruct();
+    boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer;
+    viewer = simpleVis(basic_cloud_ptr);
+    while (!viewer->wasStopped ())
+    {
+        viewer->spinOnce (100);
+        boost::this_thread::sleep (boost::posix_time::microseconds (100000));
+    }
+
+
 }
 
 void SampleListener::onFrame(const Controller& controller) {
-  // Get the most recent frame and report some basic information
-  const Frame frame = controller.frame();
-  std::cout << "Frame id: " << frame.id()
-            << ", timestamp: " << frame.timestamp()
-            << ", hands: " << frame.hands().count()
-            << ", extended fingers: " << frame.fingers().extended().count()
-            << ", tools: " << frame.tools().count()
-            << ", gestures: " << frame.gestures().count() << std::endl;
+    // Get the most recent frame and report some basic information
+    const Frame frame = controller.frame();
+    HandList hands = frame.hands();
+    for (HandList::const_iterator hl = hands.begin(); hl != hands.end(); ++hl) {
+        const Hand hand = *hl;
+        pcl::PointXYZ basic_point;
+        basic_point.x = hand.palmPosition().x;
+        basic_point.y = hand.palmPosition().y;
+        basic_point.z = hand.palmPosition().z;
+        basic_cloud_ptr->points.push_back(basic_point);
 
-  HandList hands = frame.hands();
-  for (HandList::const_iterator hl = hands.begin(); hl != hands.end(); ++hl) {
-    // Get the first hand
-    const Hand hand = *hl;
-    std::string handType = hand.isLeft() ? "Left hand" : "Right hand";
-    std::cout << std::string(2, ' ') << handType << ", id: " << hand.id()
-              << ", palm position: " << hand.palmPosition() << std::endl;
-    // Get the hand's normal vector and direction
-    const Vector normal = hand.palmNormal();
-    const Vector direction = hand.direction();
-
-    // Calculate the hand's pitch, roll, and yaw angles
-    std::cout << std::string(2, ' ') <<  "pitch: " << direction.pitch() * RAD_TO_DEG << " degrees, "
-              << "roll: " << normal.roll() * RAD_TO_DEG << " degrees, "
-              << "yaw: " << direction.yaw() * RAD_TO_DEG << " degrees" << std::endl;
-
-    // Get the Arm bone
-    Arm arm = hand.arm();
-    std::cout << std::string(2, ' ') <<  "Arm direction: " << arm.direction()
-              << " wrist position: " << arm.wristPosition()
-              << " elbow position: " << arm.elbowPosition() << std::endl;
-
-    // Get fingers
-    const FingerList fingers = hand.fingers();
-    for (FingerList::const_iterator fl = fingers.begin(); fl != fingers.end(); ++fl) {
-      const Finger finger = *fl;
-      std::cout << std::string(4, ' ') <<  fingerNames[finger.type()]
-                << " finger, id: " << finger.id()
-                << ", length: " << finger.length()
-                << "mm, width: " << finger.width() << std::endl;
-
-      // Get finger bones
-      for (int b = 0; b < 4; ++b) {
-        Bone::Type boneType = static_cast<Bone::Type>(b);
-        Bone bone = finger.bone(boneType);
-        std::cout << std::string(6, ' ') <<  boneNames[boneType]
-                  << " bone, start: " << bone.prevJoint()
-                  << ", end: " << bone.nextJoint()
-                  << ", direction: " << bone.direction() << std::endl;
-      }
-    }
-  }
-
-  // Get tools
-  const ToolList tools = frame.tools();
-  for (ToolList::const_iterator tl = tools.begin(); tl != tools.end(); ++tl) {
-    const Tool tool = *tl;
-    std::cout << std::string(2, ' ') <<  "Tool, id: " << tool.id()
-              << ", position: " << tool.tipPosition()
-              << ", direction: " << tool.direction() << std::endl;
-  }
-
-  // Get gestures
-  const GestureList gestures = frame.gestures();
-  for (int g = 0; g < gestures.count(); ++g) {
-    Gesture gesture = gestures[g];
-
-    switch (gesture.type()) {
-      case Gesture::TYPE_CIRCLE:
-      {
-        CircleGesture circle = gesture;
-        std::string clockwiseness;
-
-        if (circle.pointable().direction().angleTo(circle.normal()) <= PI/2) {
-          clockwiseness = "clockwise";
-        } else {
-          clockwiseness = "counterclockwise";
+        // Get fingers
+        const FingerList fingers = hand.fingers();
+        for (FingerList::const_iterator fl = fingers.begin(); fl != fingers.end(); ++fl) {
+            const Finger finger = *fl;
+            pcl::PointXYZ basic_point;
+            basic_point.x = finger.tipPosition().x;
+            basic_point.y = finger.tipPosition().y;
+            basic_point.z = finger.tipPosition().z;
+            basic_cloud_ptr->points.push_back(basic_point);
         }
-
-        // Calculate angle swept since last frame
-        float sweptAngle = 0;
-        if (circle.state() != Gesture::STATE_START) {
-          CircleGesture previousUpdate = CircleGesture(controller.frame(1).gesture(circle.id()));
-          sweptAngle = (circle.progress() - previousUpdate.progress()) * 2 * PI;
-        }
-        std::cout << std::string(2, ' ')
-                  << "Circle id: " << gesture.id()
-                  << ", state: " << stateNames[gesture.state()]
-                  << ", progress: " << circle.progress()
-                  << ", radius: " << circle.radius()
-                  << ", angle " << sweptAngle * RAD_TO_DEG
-                  <<  ", " << clockwiseness << std::endl;
-        break;
-      }
-      case Gesture::TYPE_SWIPE:
-      {
-        SwipeGesture swipe = gesture;
-        std::cout << std::string(2, ' ')
-          << "Swipe id: " << gesture.id()
-          << ", state: " << stateNames[gesture.state()]
-          << ", direction: " << swipe.direction()
-          << ", speed: " << swipe.speed() << std::endl;
-        break;
-      }
-      case Gesture::TYPE_KEY_TAP:
-      {
-        KeyTapGesture tap = gesture;
-        std::cout << std::string(2, ' ')
-          << "Key Tap id: " << gesture.id()
-          << ", state: " << stateNames[gesture.state()]
-          << ", position: " << tap.position()
-          << ", direction: " << tap.direction()<< std::endl;
-        break;
-      }
-      case Gesture::TYPE_SCREEN_TAP:
-      {
-        ScreenTapGesture screentap = gesture;
-        std::cout << std::string(2, ' ')
-          << "Screen Tap id: " << gesture.id()
-          << ", state: " << stateNames[gesture.state()]
-          << ", position: " << screentap.position()
-          << ", direction: " << screentap.direction()<< std::endl;
-        break;
-      }
-      default:
-        std::cout << std::string(2, ' ')  << "Unknown gesture type." << std::endl;
-        break;
     }
-  }
-
-  if (!frame.hands().isEmpty() || !gestures.isEmpty()) {
-    std::cout << std::endl;
-  }
-
 }
 
 void SampleListener::onFocusGained(const Controller& controller) {
-  std::cout << "Focus Gained" << std::endl;
+    std::cout << "Focus Gained" << std::endl;
 }
 
 void SampleListener::onFocusLost(const Controller& controller) {
-  std::cout << "Focus Lost" << std::endl;
+    std::cout << "Focus Lost" << std::endl;
 }
 
 void SampleListener::onDeviceChange(const Controller& controller) {
-  std::cout << "Device Changed" << std::endl;
-  const DeviceList devices = controller.devices();
+    std::cout << "Device Changed" << std::endl;
+    const DeviceList devices = controller.devices();
 
-  for (int i = 0; i < devices.count(); ++i) {
-    std::cout << "id: " << devices[i].toString() << std::endl;
-    std::cout << "  isStreaming: " << (devices[i].isStreaming() ? "true" : "false") << std::endl;
-  }
+    for (int i = 0; i < devices.count(); ++i) {
+        std::cout << "id: " << devices[i].toString() << std::endl;
+        std::cout << "  isStreaming: " << (devices[i].isStreaming() ? "true" : "false") << std::endl;
+    }
 }
 
 void SampleListener::onServiceConnect(const Controller& controller) {
-  std::cout << "Service Connected" << std::endl;
+    std::cout << "Service Connected" << std::endl;
 }
 
 void SampleListener::onServiceDisconnect(const Controller& controller) {
-  std::cout << "Service Disconnected" << std::endl;
+    std::cout << "Service Disconnected" << std::endl;
 }
 
 int main(int argc, char** argv) {
-  // Create a sample listener and controller
-  SampleListener listener;
-  Controller controller;
+    // Create a sample listener and controller
+    SampleListener listener;
+    Controller controller;
 
-  // Have the sample listener receive events from the controller
-  controller.addListener(listener);
+    // Have the sample listener receive events from the controller
+    controller.addListener(listener);
 
-  if (argc > 1 && strcmp(argv[1], "--bg") == 0)
-    controller.setPolicy(Leap::Controller::POLICY_BACKGROUND_FRAMES);
+    if (argc > 1 && strcmp(argv[1], "--bg") == 0)
+        controller.setPolicy(Leap::Controller::POLICY_BACKGROUND_FRAMES);
 
-  // Keep this process running until Enter is pressed
-  std::cout << "Press Enter to quit..." << std::endl;
-  std::cin.get();
+    // Keep this process running until Enter is pressed
+    std::cout << "Press Enter to quit..." << std::endl;
+    std::cin.get();
 
-  // Remove the sample listener when done
-  controller.removeListener(listener);
+    // Remove the sample listener when done
+    controller.removeListener(listener);
 
-  return 0;
+
+
+    return 0;
+}
+
+void reconstruct()
+{
+    cout << "begin passthrough filter" << endl;
+    PointCloud<PointXYZ>::Ptr filtered(new PointCloud<PointXYZ>());
+    PassThrough<PointXYZ> filter;
+    filter.setInputCloud(basic_cloud_ptr);
+    filter.filter(*filtered);
+    cout << "passthrough filter complete" << endl;
+    cout << "begin normal estimation" << endl;
+    NormalEstimationOMP<PointXYZ, Normal> ne;
+    ne.setNumberOfThreads(8);
+    ne.setInputCloud(filtered);
+    ne.setRadiusSearch(100);
+    Eigen::Vector4f centroid;
+    compute3DCentroid(*filtered, centroid);
+    ne.setViewPoint(centroid[0], centroid[1], centroid[2]);
+
+    PointCloud<Normal>::Ptr cloud_normals (new PointCloud<Normal>());
+    ne.compute(*cloud_normals);
+    cout << "normal estimation complete" << endl;
+
+    cout << "combine points and normals" << endl;
+    PointCloud<PointNormal>::Ptr cloud_smoothed_normals(new PointCloud<PointNormal>());
+    concatenateFields(*filtered, *cloud_normals, *cloud_smoothed_normals);
+
+    cout << "begin poisson reconstruction" << endl;
+    Poisson<PointNormal> poisson;
+    poisson.setDepth(3);
+    poisson.setInputCloud(cloud_smoothed_normals);
+    PolygonMesh mesh;
+    poisson.reconstruct(mesh);
+
+    io::savePLYFile("/Users/gautamgupta/Desktop/project/demo/mesh.ply", mesh);
 }

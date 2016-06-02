@@ -1,12 +1,14 @@
-cmake_minimum_required(VERSION 3.5)
-project(proto1)
-find_package(PCL 1.3 REQUIRED COMPONENTS common io)
+cmake_minimum_required(VERSION 2.6 FATAL_ERROR)
+
+project(pcl_visualizer_viewports)
+
+find_package(PCL 1.2 REQUIRED)
 include_directories(/Users/gautamgupta/Documents/LeapSDK/include)
 include_directories(${PCL_INCLUDE_DIRS})
-link_directories(/Users/gautamgupta/Documents/LeapSDK/lib)
 link_directories(${PCL_LIBRARY_DIRS})
+link_directories(/Users/gautamgupta/Documents/LeapSDK/lib)
+
 add_definitions(${PCL_DEFINITIONS})
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
-set(SOURCE_FILES main.cpp)
-add_executable(proto1 ${SOURCE_FILES})
-target_link_libraries(proto1 /Users/gautamgupta/Documents/LeapSDK/lib/libLeap.dylib ${PCL_COMMON_LIBRARIES} ${PCL_IO_LIBRARIES})
+
+add_executable (main main.cpp ref.cpp)
+target_link_libraries (main ${PCL_LIBRARIES} /Users/gautamgupta/Documents/LeapSDK/lib/libLeap.dylib)
