@@ -182,6 +182,7 @@
           <root url="file:///usr/include" />
           <root url="file:///usr/local/include" />
           <root url="file:///usr/local/Cellar/Vtk/6.3.0/include/vtk-6.3" />
+          <root url="file:///usr/local/Cellar/flann/1.8.4_1/include" />
           <root url="file:///usr/local/Cellar/eigen/3.2.8/include/eigen3" />
           <root url="file:///usr/local/Cellar/qt/4.8.7_2/lib/QtCore.framework/Headers" />
           <root url="file:///usr/local/Cellar/qt/4.8.7_2/lib/QtXml.framework/Headers" />
@@ -552,6 +553,7 @@
           <root url="file:///usr/include" />
           <root url="file:///usr/local/include" />
           <root url="file:///usr/local/Cellar/Vtk/6.3.0/include/vtk-6.3" />
+          <root url="file:///usr/local/Cellar/flann/1.8.4_1/include" />
           <root url="file:///usr/local/Cellar/eigen/3.2.8/include/eigen3" />
           <root url="file:///usr/local/Cellar/qt/4.8.7_2/lib/QtCore.framework/Headers" />
           <root url="file:///usr/local/Cellar/qt/4.8.7_2/lib/QtXml.framework/Headers" />

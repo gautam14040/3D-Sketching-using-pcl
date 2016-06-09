@@ -4,3 +4,12 @@ CMakeScripts
 Makefile
 cmake_install.cmake
 install_manifest.txt
+cylinder_attempt
+plane_attempt
+sphere_attempt
+mesh.ply
+main
+
+.DS_Store
+.idea
+build

@@ -10,5 +10,5 @@ link_directories(/Users/gautamgupta/Documents/LeapSDK/lib)
 
 add_definitions(${PCL_DEFINITIONS})
 
-add_executable (main main.cpp ref.cpp)
+add_executable (main main.cpp)
 target_link_libraries (main ${PCL_LIBRARIES} /Users/gautamgupta/Documents/LeapSDK/lib/libLeap.dylib)
