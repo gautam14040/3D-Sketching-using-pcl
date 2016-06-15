@@ -13,3 +13,6 @@ main
 .DS_Store
 .idea
 build
+
+pcl_visualizer_viewports.build/
+pcl_visualizer_viewports.xcodeproj/
