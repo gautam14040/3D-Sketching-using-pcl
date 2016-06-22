@@ -16,3 +16,5 @@ build
 
 pcl_visualizer_viewports.build/
 pcl_visualizer_viewports.xcodeproj/
+
+*.ply
