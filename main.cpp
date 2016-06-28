@@ -19,6 +19,7 @@
 #include <pcl/surface/poisson.h>
 #include <pcl/filters/passthrough.h>
 #include <pcl/surface/gp3.h>
+
 using namespace Leap;
 using namespace pcl;
 using namespace std;
@@ -26,12 +27,12 @@ using namespace std;
 boost::mutex updateModelMutex;
 volatile bool update;
 
-pcl::PointCloud<pcl::PointXYZ>::Ptr basic_cloud_ptr(
-		new pcl::PointCloud<pcl::PointXYZ>);
+PointCloud<PointXYZ>::Ptr global_cloud_ptr(new PointCloud<PointXYZ>);
 
-pcl::PointCloud<pcl::PointXYZ>::Ptr hand(new pcl::PointCloud<pcl::PointXYZ>);
-boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer(
-		new pcl::visualization::PCLVisualizer("3D Viewer"));
+PointCloud<PointXYZ>::Ptr hand(new PointCloud<PointXYZ>);
+
+boost::shared_ptr<visualization::PCLVisualizer> viewer(
+		new visualization::PCLVisualizer("3D Viewer"));
 
 const Controller *controller_global;
 
@@ -41,18 +42,11 @@ const string stateNames[] = { "STATE_INVALID", "STATE_START", "STATE_UPDATE",
 		"STATE_END" };
 
 int flag = 0;
-pcl::PointXYZ pt[5][4];
-pcl::PointXYZ pt_prev[5][4];
+PointXYZ pt[5][4];
+PointXYZ pt_prev[5][4];
 Eigen::Affine3f transform = Eigen::Affine3f::Identity();
 
-void print_cam(boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer);
-
-void add_shapes();
-void add_interaction_box();
-
-PolygonMesh poission_passthrough();
-PolygonMesh reconstruct();
-PolygonMesh reconstructGP3();
+vector<PolygonMesh> meshes;
 
 PointXYZ bmin;
 PointXYZ bmax;
@@ -94,11 +88,10 @@ void SampleListener::onDisconnect(const Controller& controller) {
 void SampleListener::onExit(const Controller& controller) {
 	cout << "Exiting.." << endl;
 
-	basic_cloud_ptr->width = (int) basic_cloud_ptr->points.size();
-	basic_cloud_ptr->height = 1;
-
-//	PolygonMesh mesh = possio();
-//	io::savePLYFile("MLS_POISSION.ply", mesh);
+	//Combine all meshes and display it
+//	for(int i; i < meshes.size(); i++){
+//		viewer->addPolygonMesh(meshes[i], "mesh_" + to_string(i), 0);
+//	}
 
 	exit(0);
 }
@@ -128,12 +121,12 @@ void SampleListener::onFrame(const Controller& controller) {
 	HandList hands = frame.hands();
 	for (HandList::const_iterator hl = hands.begin(); hl != hands.end(); ++hl) {
 		const Hand hand = *hl;
-		pcl::PointXYZ basic_point;
+		PointXYZ basic_point;
 		basic_point.x = hand.palmPosition().x;
 		basic_point.y = hand.palmPosition().y;
 		basic_point.z = hand.palmPosition().z;
 
-		basic_cloud_ptr->points.push_back(basic_point);
+		global_cloud_ptr->points.push_back(basic_point);
 
 		const FingerList fingers = hand.fingers();
 		if (hand.isRight()) {
@@ -147,7 +140,7 @@ void SampleListener::onFrame(const Controller& controller) {
 				f.y = finger.tipPosition().y;
 				f.z = finger.tipPosition().z;
 
-				basic_cloud_ptr->points.push_back(f);
+				global_cloud_ptr->points.push_back(f);
 
 				string name;
 				for (int b = 0; b < 4; ++b) {
@@ -156,12 +149,12 @@ void SampleListener::onFrame(const Controller& controller) {
 					Bone bone = finger.bone(boneType);
 					name = fingerNames[finger.type()] + "_" + boneNames[b];
 
-					pcl::PointXYZ next;
+					PointXYZ next;
 					next.x = bone.nextJoint().x;
 					next.y = bone.nextJoint().y;
 					next.z = bone.nextJoint().z;
 
-					pcl::PointXYZ prev;
+					PointXYZ prev;
 					prev.x = bone.prevJoint().x;
 					prev.y = bone.prevJoint().y;
 					prev.z = bone.prevJoint().z;
@@ -212,75 +205,79 @@ void leap() {
 	controller.removeListener(listener);
 }
 
-int main(int argc, char** argv) {
-	thread first(leap);
-
-	cout << "Visualizer Steup\n";
-	add_shapes();
-	viewer->setBackgroundColor(0, 0, 0);
-	viewer->addCoordinateSystem();
-	viewer->initCameraParameters();
-	viewer->setCameraPosition(189.194, 1016.86, -166.963, 0.701186, -0.239757,
-			-0.671457, 0.738823, -0.429874, -0.518987);
-	viewer->addPointCloud<pcl::PointXYZ>(basic_cloud_ptr, "cloud");
-	viewer->setPointCloudRenderingProperties(
-			pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 3); //default point cloud id=cloud
-
-	add_interaction_box();
-
-	cout << "============== Adding Objects complete ==============\n";
-
-	while (!viewer->wasStopped()) {
-		viewer->spinOnce(10); //loop allowed to run for 10ms (frame rate)
-
-		boost::mutex::scoped_lock updateLock(updateModelMutex); //init lock
-		if (update) {
-			if (!viewer->updatePointCloud(basic_cloud_ptr))
-				viewer->addPointCloud(basic_cloud_ptr);
-
-			PolygonMesh mesh = poission_passthrough();
-			viewer->removeShape("mesh");
-			viewer->addPolygonMesh(mesh, "mesh", 0);
-
-			for (int i = 0; i < 5; i++) {
-				for (int j = 0; j < 4; j++) {
-					viewer->removeShape(
-							string(fingerNames[i] + "_" + boneNames[j]));
-					viewer->addSphere(pt[i][j], 3.0, 0, 0, 255,
-							string(fingerNames[i] + "_" + boneNames[j])); //255, 255, 255
-					viewer->removeShape(
-							string(fingerNames[i] + "_" + boneNames[j] + "l"));
-					viewer->addLine(pt_prev[i][j], pt[i][j], 255, 255, 0,
-							string(fingerNames[i] + "_" + boneNames[j]) + "l"); //251, 223, 65
-				}
-			}
-			update = false;
-		}
-		updateLock.unlock();
-	}
-
-	first.join();
-
-	return 0;
-}
-
 PolygonMesh reconstructGP3() {
 
-	basic_cloud_ptr->width = (int) basic_cloud_ptr->points.size();
-	basic_cloud_ptr->height = 1;
-
 	PolygonMesh triangles;
+
+//	local_cloud_ptr->width = (int) local_cloud_ptr->points.size();
+//	local_cloud_ptr->height = 1;
+
+	if ((int) global_cloud_ptr->points.size() < 50) {
+		return triangles;
+	}
+
+	// Create a KD-Tree
+	search::KdTree<PointXYZ>::Ptr tree(new search::KdTree<PointXYZ>);
+	PointCloud<PointXYZ>::Ptr mls_smoothed(new PointCloud<PointXYZ>());
+
+	MovingLeastSquares<PointXYZ, PointXYZ> mls;
+
+	mls.setInputCloud(global_cloud_ptr);
+	mls.setPolynomialFit(true);
+	mls.setSearchMethod(tree);
+	mls.setSearchRadius(0.03);
+	mls.process(*mls_smoothed);
+
+	// Normal estimation*
+	NormalEstimationOMP<PointXYZ, Normal> n;
+	PointCloud<Normal>::Ptr normals(new PointCloud<Normal>);
+	tree->setInputCloud(mls_smoothed);
+	n.setInputCloud(mls_smoothed);
+	n.setSearchMethod(tree);
+	n.setKSearch(20);
+	n.compute(*normals);
+	//* normals should not contain the point normals + surface curvatures
+
+	// Concatenate the XYZ and normal fields*
+	PointCloud<PointNormal>::Ptr cloud_with_normals(
+			new PointCloud<PointNormal>);
+	concatenateFields(*mls_smoothed, *normals, *cloud_with_normals);
+	//* cloud_with_normals = cloud + normals
+
+	// Create search tree*
+	search::KdTree<PointNormal>::Ptr tree2(new search::KdTree<PointNormal>);
+	tree2->setInputCloud(cloud_with_normals);
+
+	// Initialize objects
+	GreedyProjectionTriangulation<PointNormal> gp3;
+
+	// Set the maximum distance between connected points (maximum edge length)
+	gp3.setSearchRadius(0.025);
+
+	// Set typical values for the parameters
+	gp3.setMu(2.5);
+	gp3.setMaximumNearestNeighbors(100);
+	gp3.setMaximumSurfaceAngle(M_PI / 4); // 45 degrees
+	gp3.setMinimumAngle(M_PI / 18); // 10 degrees
+	gp3.setMaximumAngle(2 * M_PI / 3); // 120 degrees
+	gp3.setNormalConsistency(false);
+
+	// Get result
+	gp3.setInputCloud(cloud_with_normals);
+	gp3.setSearchMethod(tree2);
+	gp3.reconstruct(triangles);
+
 	return triangles;
 }
 
 PolygonMesh poission_passthrough() {
 
-	basic_cloud_ptr->width = (int) basic_cloud_ptr->points.size();
-	basic_cloud_ptr->height = 1;
+//	local_cloud_ptr->width = (int) local_cloud_ptr->points.size();
+//	local_cloud_ptr->height = 1;
 
 	PointCloud<PointXYZ>::Ptr filtered(new PointCloud<PointXYZ>());
 	PassThrough<PointXYZ> filter;
-	filter.setInputCloud(basic_cloud_ptr);
+	filter.setInputCloud(global_cloud_ptr);
 	filter.filter(*filtered);
 
 	NormalEstimationOMP<PointXYZ, Normal> ne;
@@ -316,21 +313,19 @@ PolygonMesh poission_passthrough() {
 
 PolygonMesh reconstruct() {
 
-	basic_cloud_ptr->width = (int) basic_cloud_ptr->points.size();
-	basic_cloud_ptr->height = 1;
+//	local_cloud_ptr->width = (int) local_cloud_ptr->points.size();
+//	local_cloud_ptr->height = 1;
+
+	// Create a KD-Tree
+	search::KdTree<PointXYZ>::Ptr tree(new search::KdTree<PointXYZ>);
+	PointCloud<PointXYZ>::Ptr mls_smoothed(new PointCloud<PointXYZ>());
 
 	MovingLeastSquares<PointXYZ, PointXYZ> mls;
-	mls.setInputCloud(basic_cloud_ptr);
-	mls.setSearchRadius(0.01);
-	mls.setPolynomialFit(true);
-	mls.setComputeNormals(true);
-	mls.setPolynomialOrder(2);
-//	mls.setUpsamplingMethod(
-//			MovingLeastSquares<PointXYZ, PointXYZ>::SAMPLE_LOCAL_PLANE);
-//	mls.setUpsamplingRadius(0.005);
-//	mls.setUpsamplingStepSize(0.003);
 
-	PointCloud<PointXYZ>::Ptr mls_smoothed(new PointCloud<PointXYZ>());
+	mls.setInputCloud(global_cloud_ptr);
+	mls.setPolynomialFit(true);
+	mls.setSearchMethod(tree);
+	mls.setSearchRadius(0.03);
 	mls.process(*mls_smoothed);
 
 	NormalEstimationOMP<PointXYZ, Normal> ne;
@@ -366,8 +361,8 @@ PolygonMesh reconstruct() {
 	return mesh;
 }
 
-void print_cam(boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer) {
-	vector<pcl::visualization::Camera> cam;
+void print_cam(boost::shared_ptr<visualization::PCLVisualizer> viewer) {
+	vector<visualization::Camera> cam;
 	viewer->getCameras(cam);
 	cout << "Cam: " << endl << " - pos: (" << cam[0].pos[0] << ", "
 			<< cam[0].pos[1] << ", " << cam[0].pos[2] << ")" << endl
@@ -378,7 +373,7 @@ void print_cam(boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer) {
 }
 
 void add_shapes() {
-	pcl::PointXYZ init;
+	PointXYZ init;
 	init.x = 0;
 	init.y = 0;
 	init.z = 0;
@@ -402,13 +397,70 @@ void add_shapes() {
 void add_interaction_box() {
 	viewer->addCube(bmin.x, bmax.x, bmin.y, bmax.y, bmin.z, bmax.z, 0, 0,
 			256 /*R,G,B*/, "cube");
+	viewer->setShapeRenderingProperties(visualization::PCL_VISUALIZER_COLOR,
+			0.9, 0.1, 0.1 /*R,G,B*/, "cube", 0);
+	viewer->setShapeRenderingProperties(visualization::PCL_VISUALIZER_OPACITY,
+			1, "cube", 0);
 	viewer->setShapeRenderingProperties(
-			pcl::visualization::PCL_VISUALIZER_COLOR, 0.9, 0.1, 0.1 /*R,G,B*/,
-			"cube", 0);
-	viewer->setShapeRenderingProperties(
-			pcl::visualization::PCL_VISUALIZER_OPACITY, 1, "cube", 0);
-	viewer->setShapeRenderingProperties(
-			pcl::visualization::PCL_VISUALIZER_REPRESENTATION,
-			pcl::visualization::PCL_VISUALIZER_REPRESENTATION_WIREFRAME, "cube",
-			0);
+			visualization::PCL_VISUALIZER_REPRESENTATION,
+			visualization::PCL_VISUALIZER_REPRESENTATION_WIREFRAME, "cube", 0);
+}
+
+int main(int argc, char** argv) {
+	thread first(leap);
+
+	cout << "Visualizer Setup\n";
+	add_shapes();
+	viewer->setBackgroundColor(0, 0, 0);
+	viewer->addCoordinateSystem();
+	viewer->initCameraParameters();
+	viewer->setCameraPosition(189.194, 1016.86, -166.963, 0.701186, -0.239757,
+			-0.671457, 0.738823, -0.429874, -0.518987);
+	viewer->addPointCloud<PointXYZ>(global_cloud_ptr, "cloud");
+	viewer->setPointCloudRenderingProperties(
+			visualization::PCL_VISUALIZER_POINT_SIZE, 3); //default point cloud id=cloud
+
+	add_interaction_box();
+
+	cout << "============== Adding Objects complete ==============\n";
+
+	int meshNo = 0;
+	while (!viewer->wasStopped()) {
+		viewer->spinOnce(10); //loop allowed to run for 10ms (frame rate)
+
+		boost::mutex::scoped_lock updateLock(updateModelMutex); //init lock
+		if (update) {
+			if (!viewer->updatePointCloud(global_cloud_ptr)) {
+				viewer->addPointCloud(global_cloud_ptr);
+			}
+
+			meshNo++;
+
+			PolygonMesh mesh = reconstruct();
+			meshes.push_back(mesh);
+//			viewer->removeShape("mesh");
+			viewer->addPolygonMesh(mesh, "mesh_" + meshNo, 0);
+
+			global_cloud_ptr->points.clear();
+
+			for (int i = 0; i < 5; i++) {
+				for (int j = 0; j < 4; j++) {
+					viewer->removeShape(
+							string(fingerNames[i] + "_" + boneNames[j]));
+					viewer->addSphere(pt[i][j], 3.0, 0, 0, 255,
+							string(fingerNames[i] + "_" + boneNames[j])); //255, 255, 255
+					viewer->removeShape(
+							string(fingerNames[i] + "_" + boneNames[j] + "l"));
+					viewer->addLine(pt_prev[i][j], pt[i][j], 255, 255, 0,
+							string(fingerNames[i] + "_" + boneNames[j]) + "l"); //251, 223, 65
+				}
+			}
+			update = false;
+		}
+		updateLock.unlock();
+	}
+
+	first.join();
+
+	return 0;
 }

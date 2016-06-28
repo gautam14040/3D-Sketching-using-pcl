@@ -9,7 +9,9 @@ link_directories(${PCL_LIBRARY_DIRS})
 link_directories(/home/naman/Documents/Softwares/LeapSDK/lib)
  
 #add_compile_options(-Wall -Wextra -std=c++0x -pthread) # for all targets in current directory
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Ofast")
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fopenmp")
 
 add_definitions(${PCL_DEFINITIONS})
 
