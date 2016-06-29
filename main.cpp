@@ -207,15 +207,6 @@ void leap() {
 
 PolygonMesh reconstructGP3() {
 
-	PolygonMesh triangles;
-
-//	local_cloud_ptr->width = (int) local_cloud_ptr->points.size();
-//	local_cloud_ptr->height = 1;
-
-	if ((int) global_cloud_ptr->points.size() < 50) {
-		return triangles;
-	}
-
 	// Create a KD-Tree
 	search::KdTree<PointXYZ>::Ptr tree(new search::KdTree<PointXYZ>);
 	PointCloud<PointXYZ>::Ptr mls_smoothed(new PointCloud<PointXYZ>());
@@ -232,6 +223,7 @@ PolygonMesh reconstructGP3() {
 	NormalEstimationOMP<PointXYZ, Normal> n;
 	PointCloud<Normal>::Ptr normals(new PointCloud<Normal>);
 	tree->setInputCloud(mls_smoothed);
+	n.setNumberOfThreads(8);
 	n.setInputCloud(mls_smoothed);
 	n.setSearchMethod(tree);
 	n.setKSearch(20);
@@ -250,6 +242,7 @@ PolygonMesh reconstructGP3() {
 
 	// Initialize objects
 	GreedyProjectionTriangulation<PointNormal> gp3;
+	PolygonMesh triangles;
 
 	// Set the maximum distance between connected points (maximum edge length)
 	gp3.setSearchRadius(0.025);
@@ -265,7 +258,12 @@ PolygonMesh reconstructGP3() {
 	// Get result
 	gp3.setInputCloud(cloud_with_normals);
 	gp3.setSearchMethod(tree2);
-	gp3.reconstruct(triangles);
+
+	try {
+		gp3.reconstruct(triangles);
+	} catch (...) {
+		cerr << "Error in reconstruction!" << endl;
+	}
 
 	return triangles;
 }
@@ -329,7 +327,7 @@ PolygonMesh reconstruct() {
 	mls.process(*mls_smoothed);
 
 	NormalEstimationOMP<PointXYZ, Normal> ne;
-	ne.setNumberOfThreads(8);
+	ne.setNumberOfThreads(4);
 	ne.setInputCloud(mls_smoothed);
 	ne.setRadiusSearch(100);
 
@@ -351,7 +349,6 @@ PolygonMesh reconstruct() {
 	concatenateFields(*mls_smoothed, *cloud_normals, *cloud_smoothed_normals);
 
 	PolygonMesh mesh;
-
 	Poisson<PointNormal> poisson;
 	poisson.setDepth(3);
 	poisson.setInputCloud(cloud_smoothed_normals);
@@ -433,16 +430,18 @@ int main(int argc, char** argv) {
 			if (!viewer->updatePointCloud(global_cloud_ptr)) {
 				viewer->addPointCloud(global_cloud_ptr);
 			}
-
 			meshNo++;
 
-			PolygonMesh mesh = reconstruct();
-			meshes.push_back(mesh);
-//			viewer->removeShape("mesh");
-			viewer->addPolygonMesh(mesh, "mesh_" + meshNo, 0);
+			if (global_cloud_ptr->points.size() > 100) {
+				PolygonMesh mesh = reconstructGP3();
 
-			global_cloud_ptr->points.clear();
-
+				if (mesh.polygons.size() != 0 || mesh.cloud.data.size() != 0) {
+					meshes.push_back(mesh);
+					//			viewer->removeShape("mesh");
+					viewer->addPolygonMesh(mesh, "mesh_" + meshNo, 0);
+					global_cloud_ptr->points.clear();
+				}
+			}
 			for (int i = 0; i < 5; i++) {
 				for (int j = 0; j < 4; j++) {
 					viewer->removeShape(
