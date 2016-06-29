@@ -19,6 +19,7 @@
 #include <pcl/surface/poisson.h>
 #include <pcl/filters/passthrough.h>
 #include <pcl/surface/gp3.h>
+#include <pcl/surface/grid_projection.h>
 
 using namespace Leap;
 using namespace pcl;
@@ -205,6 +206,53 @@ void leap() {
 	controller.removeListener(listener);
 }
 
+PolygonMesh reconstructGP() {
+
+	// Create a KD-Tree
+	search::KdTree<PointXYZ>::Ptr tree(new search::KdTree<PointXYZ>);
+	PointCloud<PointXYZ>::Ptr mls_smoothed(new PointCloud<PointXYZ>());
+
+	MovingLeastSquares<PointXYZ, PointXYZ> mls;
+
+	mls.setInputCloud(global_cloud_ptr);
+	mls.setPolynomialFit(true);
+	mls.setSearchMethod(tree);
+	mls.setSearchRadius(0.03);
+	mls.process(*mls_smoothed);
+
+	// Normal estimation*
+	NormalEstimationOMP<PointXYZ, Normal> n;
+	PointCloud<Normal>::Ptr normals(new PointCloud<Normal>);
+	tree->setInputCloud(mls_smoothed);
+	n.setNumberOfThreads(8);
+	n.setInputCloud(mls_smoothed);
+	n.setSearchMethod(tree);
+	n.setKSearch(20);
+	n.compute(*normals);
+	//* normals should not contain the point normals + surface curvatures
+
+	// Concatenate the XYZ and normal fields*
+	PointCloud<PointNormal>::Ptr cloud_with_normals(
+			new PointCloud<PointNormal>);
+	concatenateFields(*mls_smoothed, *normals, *cloud_with_normals);
+	//* cloud_with_normals = cloud + normals
+
+	// Create search tree*
+	search::KdTree<PointNormal>::Ptr tree2(new search::KdTree<PointNormal>);
+	tree2->setInputCloud(cloud_with_normals);
+
+	PolygonMesh triangles;
+	GridProjection<PointNormal> gp;
+
+	gp.setInputCloud(cloud_with_normals);
+	gp.setSearchMethod(tree2);
+	gp.setResolution(0.005);
+	gp.setPaddingSize(3);
+	gp.reconstruct(triangles);
+
+	return triangles;
+}
+
 PolygonMesh reconstructGP3() {
 
 	// Create a KD-Tree
@@ -350,7 +398,7 @@ PolygonMesh reconstruct() {
 
 	PolygonMesh mesh;
 	Poisson<PointNormal> poisson;
-	poisson.setDepth(3);
+	poisson.setDepth(3); //TODO NG: try reducing the depth.
 	poisson.setInputCloud(cloud_smoothed_normals);
 
 	poisson.reconstruct(mesh);
@@ -423,7 +471,7 @@ int main(int argc, char** argv) {
 
 	int meshNo = 0;
 	while (!viewer->wasStopped()) {
-		viewer->spinOnce(10); //loop allowed to run for 10ms (frame rate)
+		viewer->spinOnce(100); //loop allowed to run for 10ms (frame rate)
 
 		boost::mutex::scoped_lock updateLock(updateModelMutex); //init lock
 		if (update) {
@@ -432,10 +480,14 @@ int main(int argc, char** argv) {
 			}
 			meshNo++;
 
-			if (global_cloud_ptr->points.size() > 100) {
-				PolygonMesh mesh = reconstructGP3();
+			if (global_cloud_ptr->points.size() > 0) {
+				PolygonMesh mesh = reconstruct(); //TODO NG: change this to reconstructGP and reconstructGP3
+				//TODO NG: problem with poisson seems to be the amount of time it takes to process and make a mesh.
+				// note: when your hand stops moving, it somewhow gets time to generate a mesh.
 
-				if (mesh.polygons.size() != 0 || mesh.cloud.data.size() != 0) {
+				//there is no mesh VISIBLE for reconstructGP. because the point cloud is being cleared, it is going inside the if condition
+				//below
+				if (mesh.polygons.size() != 0) {
 					meshes.push_back(mesh);
 					//			viewer->removeShape("mesh");
 					viewer->addPolygonMesh(mesh, "mesh_" + meshNo, 0);
